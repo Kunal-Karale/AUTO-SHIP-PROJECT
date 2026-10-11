@@ -1,0 +1,32 @@
+
+pipeline{
+   agent any
+      stages{
+	stage('Checkout'){
+	   steps{
+	        git 'https://github.com/Kunal-Karale/AUTO-SHIP-PROJECT.git'
+	   }
+	}
+	stage('Build'){
+	   steps{
+	        sh 'mvn clean package'
+	   }
+	}
+	stage('Test'){
+	   steps{
+		withSonarQubeEnv('SonarQube') {
+            sh 'mvn org.sonarsource.scanner.maven:sonar-maven-plugin:3.7.0.1746:sonar'	
+	   }
+	}
+	stage('Artifacts'){
+	   steps{
+		  s3Upload consoleLogLevel: 'INFO', dontSetBuildResultOnFailure: false, dontWaitForConcurrentBuildCompletion: false, entries: [[bucket: 'hostar-bkt', excludedFile: '', flatten: false, gzipFiles: false, keepForever: false, managedArtifacts: false, noUploadOnFailure: false, selectedRegion: 'ap-south-1', showDirectlyInBrowser: false, sourceFile: '**/*.war', storageClass: 'STANDARD', uploadFromSlave: false, useServerSideEncryption: false]], pluginFailureResultConstraint: 'FAILURE', profileName: 's3-profile-creds', userMetadata: []
+	   }
+	} 
+	stage('Deploy'){
+	   steps{
+       ansiblePlaybook credentialsId: 'linuxcreds', disableHostKeyChecking: true, installation: 'ansible', inventory: '/etc/ansible/hosts', playbook: '/etc/ansible/deploy.yml', vaultTmpPath: ''
+	  }
+	}   
+     }
+}
