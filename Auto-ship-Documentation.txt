@@ -1,0 +1,248 @@
+
+
+			Auto-ship using (CICD,Ansible,jenkins)
+			--------------------------------------
+
+--> Launch AL2023 ec2 server with 20gb and c7i-flex,large.
+
+	login it & update it.
+
+--> Launch 2 AL2023 ec2 servers for tomat application 
+
+	login it & update it.
+
+--> Set passwd for all three machine using 
+
+	#. set passwd
+
+	 chnage root setting in 
+	
+	/etc/ssh/sshd_config
+               (Do sum changes like 40 & 65 line uncomment and write yes removeing no).
+		
+	restart sshd ....server 
+
+--> Install dependancies 
+
+	# yum update -y
+	# yum install python3 -y
+	# yum install python3-pip -y
+	# yum install ansible -y
+
+  Add host in inventry file in path --> vi  /etc/ansible/hosts.
+
+  In control node add ssh-keygen and add managed node to control node. using 
+
+	#. ssh-copy-id root@[private-ip]
+
+
+--> ansible all -m ping 	.........(Command to check the connection are done or not in managed node).
+
+--> install jenkins using script and login it install dependancies
+
+	1. doploy to container 
+	2. s3 publisher
+	3. ansible
+
+		............(Restart the jenkins and get the connection between ansible and jenkins using tool-->name (ansible) -->path (/bin) )
+
+-->  write a pipeline 
+
+pipeline{
+   agent any
+      stages{
+	stage('Checkout'){
+	   steps{
+	        git ''
+	   }
+	}
+	stage('Build'){
+	   steps{
+	        sh 'mvn clean package'
+	   }
+	}
+	stage('Test'){
+	   steps{
+			
+	   }
+	}
+	stage('Artifacts'){
+	   steps{
+		
+	   }
+	} 
+	stage('Deploy'){
+	   steps{
+    
+	  }
+	}   
+     }
+}
+
+
+--> using playbook install tomcat on managed node.
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+			_________________________________________{DEPLOY}________________________________________________________
+
+
+vi tomcat.yml
+-->
+
+---
+- name: Setup Tomcat
+  hosts: all
+  become: yes
+  tasks:
+    - name: Download tomcat from dlcdn
+      get_url:
+        url: "https://dlcdn.apache.org/tomcat/tomcat-11/v11.0.26/bin/apache-tomcat-11.0.26.tar.gz"
+        dest: "/root/"
+
+    - name: untar the apache file
+      command: tar -zxvf apache-tomcat-11.0.26.tar.gz
+
+    - name: Rename the tomcat
+      command: mv apache-tomcat-11.0.26 tomcat
+
+    - name: Install the latest available Java (OpenJDK)
+      yum:
+        name: java-17-amazon-corretto
+        state: present
+
+    - name: Setting the roles in tomcat-users.xml file
+      template:
+        src: tomcat-users.xml
+        dest: /root/tomcat/conf/tomcat-users.xml
+
+    - name: Delete two lines in context.xml
+      template:
+        src: context.xml
+        dest: /root/tomcat/webapps/manager/META-INF/context.xml
+    - name: Create Tomcat systemd Service File
+      copy:
+        dest: /etc/systemd/system/tomcat.service
+        content: |
+          [Unit]
+          Description=Apache Tomcat Server
+          After=network.target
+
+          [Service]
+          User=root
+          Group=root
+          Type=forking
+          Environment="JAVA_HOME=/usr/lib/jvm/jre"
+          Environment="CATALINA_HOME=/root/tomcat"
+          ExecStart=/root/tomcat/bin/startup.sh
+          ExecStop=/root/tomcat/bin/shutdown.sh
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes
+    - name: Start tomcat Service
+      service:
+        name: tomcat
+        state: started
+        enabled: yes
+
+
+
+
+--> ansible-playbook --syntax-check tomcat.yml 		........(Command to check errors in our playbook).
+
+--> ansible-playbook tomcat.yml 			.........(Command to run the playbook).
+
+
+In tomcat we need to upgrade to files so we can do it automatically using,
+
+already put the files in our control node path /root/
+ 1. context.xml
+ 2. tomcat-users.xml
+
+and out tomcat.yml is already exisit so when we run playbook then playbook will changed 2 files with this files. 
+
+
+if we run the playbook and it execute successfully then take any tomcat server ip and put it on browser to check it is properly working or not.
+
+
+--> Go inside the /etc/ansible and write 1 playbook to deploy our war(jenkins) file to the webapps(tomcat)
+
+vi deploy.yml
+
+---
+- name: Deploy war to tomcat servers
+  hosts: all
+  tasks:
+    - name: Give a war file to ansible
+      copy:
+        src: /var/lib/jenkins/workspace/ansible-pipeline/target/myapp.war
+        dest: /root/tomcat/webapps
+
+
+
+before run playbook make sure that our code will be at a in build stage means war file is generate.
+
+
+no need to run the playbook beacuse jenkins will do automatic so we need to give the tomcat username and passwd to the jenkins.
+
+--> add [managed node / ec2-server] credentials in jenkins.
+
+
+--> add ansible information in tool called give the name and path is --> /bin 
+
+
+--> extend the pipeline inside the deploy upload our playbook.to auto deploy.
+
+
+on deploy generate a pipeline code using ***ansibleplaybook:invoke an ansible playbook** name --> **ansible**  
+	path --> **/etc/ansible/deploy.yml**  Inventry path --> **/etc/ansible/hosts**  add Linux credentails   >> Disable the hosts key ssh (Checkout it).
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+					_________________________{ARTIFACTS}_________________________________
+--> using s3 upload the artifacts..
+  
+		Create a bkt..      add our bkt profile to the s3 publisher    and modify blow code and upload on the artifcats steps
+
+	S3 Code
+	-------
+        stage('Upload to S3') {
+            steps {
+                s3Upload consoleLogLevel: 'INFO', dontSetBuildResultOnFailure: false, dontWaitForConcurrentBuildCompletion: false, entries: [[bucket: 'hostar-bkt', excludedFile: '', flatten: false, gzipFiles: false, keepForever: false, managedArtifacts: false, noUploadOnFailure: false, selectedRegion: 'ap-south-1', showDirectlyInBrowser: false, sourceFile: '**/*.war', storageClass: 'STANDARD', uploadFromSlave: false, useServerSideEncryption: false]], pluginFailureResultConstraint: 'FAILURE', profileName: 's3-profile-creds', userMetadata: []
+            }
+        }
+
+
+
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+					________________________________{TEST}_______________________________________
+
+
+
+Launch 1 server AL2023 , t3.medium, 15Gb and need to attach role to ec2.
+
+login it and download sonar using script.
+
+
+	
+
+
+
+#! /bin/bash
+cd /opt/
+wget https://binaries.sonarsource.com/Distribution/sonarqube/sonarqube-26.9.0.129388.zip
+unzip sonarqube-26.9.0.129388.zip
+sudo dnf install java-21-amazon-corretto -y
+useradd sonar
+chown sonar:sonar sonarqube-26.9.0.129388 -R
+chmod 777 sonarqube-26.9.0.129388 -R
+su - sonar
+# use the below command manually after installation
+#sh /opt/sonarqube-26.9.0.129388/bin/linux-x86-64/sonar.sh start
+#echo "user=admin & password=admin"
